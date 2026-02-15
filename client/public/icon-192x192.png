@@ -1,0 +1,7 @@
+<svg width="192" height="192" xmlns="http://www.w3.org/2000/svg">
+  <rect width="192" height="192" fill="#10b981"/>
+  <path d="M48 48h96v96H48z" fill="none" stroke="#fff" stroke-width="8"/>
+  <path d="M72 72h48v48H72z" fill="none" stroke="#fff" stroke-width="4"/>
+  <path d="M84 84h24v24H84z" fill="#fff"/>
+  <text x="96" y="160" font-family="Arial" font-size="24" fill="#fff" text-anchor="middle">M</text>
+</svg>
