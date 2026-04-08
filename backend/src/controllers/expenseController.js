@@ -36,7 +36,14 @@ const buildFilter = (query) => {
 // @route   POST /api/expenses
 // @access  Private
 exports.createExpense = asyncHandler(async (req, res, next) => {
-  const { title, amount, category, date } = req.body;
+  const { name, title, amount, category, date } = req.body;
+
+  if (!name || name.trim() === '') {
+    return res.status(400).json({
+      success: false,
+      message: 'Expense name is required',
+    });
+  }
 
   if (!title || title.trim() === '') {
     return res.status(400).json({
@@ -53,6 +60,7 @@ exports.createExpense = asyncHandler(async (req, res, next) => {
   }
 
   const expenseData = {
+    name: name.trim(),
     title: title.trim(),
     amount: Number(amount),
     category: category && category.trim() !== '' ? category.trim() : 'General',
@@ -96,7 +104,7 @@ exports.getAllExpenses = asyncHandler(async (req, res, next) => {
   }
 
   const [expenses, total] = await Promise.all([
-    Expense.find(filter).sort({ date: -1 }).skip(skip).limit(limit),
+    Expense.find(filter).sort({ createdAt: -1, date: -1, _id: -1 }).skip(skip).limit(limit),
     Expense.countDocuments(filter),
   ]);
 
@@ -164,9 +172,10 @@ exports.updateExpense = asyncHandler(async (req, res, next) => {
     });
   }
 
-  const { title, amount, category, date } = req.body;
+  const { name, title, amount, category, date } = req.body;
 
   // Update fields if provided
+  if (name && name.trim() !== '') expense.name = name.trim();
   if (title && title.trim() !== '') expense.title = title.trim();
   if (amount !== undefined && amount >= 0) expense.amount = Number(amount);
   if (category && category.trim() !== '') expense.category = category.trim();

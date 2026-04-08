@@ -18,8 +18,51 @@ const EXPENSE_CATEGORIES = [
   'Maintenance',
   'Supplies',
   'Marketing',
-  'Other',
 ];
+
+const EXPENSE_NAME_OPTIONS = [
+  { value: '', label: 'Select Name' },
+  { value: 'Ridham', label: 'Ridham' },
+  { value: 'Vasu', label: 'Vasu' },
+  { value: 'other', label: 'Other' },
+];
+
+const EXPENSE_CATEGORY_OPTIONS = [
+  { value: '', label: 'Select Category' },
+  ...EXPENSE_CATEGORIES.map((cat) => ({ value: cat, label: cat })),
+  { value: 'other', label: 'Other' },
+];
+
+const LEGACY_EXPENSE_NAMES = ['Ridham', 'Vasu'];
+const LEGACY_NAME_SEPARATOR = '::';
+
+const getObjectIdTimestamp = (id) => {
+  if (!id || typeof id !== 'string' || id.length < 8) {
+    return 0;
+  }
+
+  const seconds = parseInt(id.slice(0, 8), 16);
+  return Number.isNaN(seconds) ? 0 : seconds * 1000;
+};
+
+const getExpenseSortTime = (expense) => {
+  const createdAtTime = new Date(expense.createdAt || 0).getTime();
+  if (!Number.isNaN(createdAtTime) && createdAtTime > 0) {
+    return createdAtTime;
+  }
+
+  const updatedAtTime = new Date(expense.updatedAt || 0).getTime();
+  if (!Number.isNaN(updatedAtTime) && updatedAtTime > 0) {
+    return updatedAtTime;
+  }
+
+  const dateTime = new Date(expense.date || 0).getTime();
+  if (!Number.isNaN(dateTime) && dateTime > 0) {
+    return dateTime;
+  }
+
+  return getObjectIdTimestamp(expense._id);
+};
 
 const Expenses = () => {
   const [expenses, setExpenses] = useState([]);
@@ -31,9 +74,12 @@ const Expenses = () => {
   const [filter, setFilter] = useState({ category: '', startDate: '', endDate: '' });
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
-    category: 'Other',
+    nameSelection: '',
+    customName: '',
+    categorySelection: '',
+    customCategory: '',
     amount: '',
-    title: '',
+    description: '',
   });
 
   const fetchExpenses = useCallback(async (filterParam) => {
@@ -44,7 +90,12 @@ const Expenses = () => {
         expenseService.getAll(fp),
         expenseService.getSummary(fp),
       ]);
-      setExpenses(Array.isArray(expensesData) ? expensesData : []);
+
+      const sortedExpenses = Array.isArray(expensesData)
+        ? [...expensesData].sort((a, b) => getExpenseSortTime(b) - getExpenseSortTime(a))
+        : [];
+
+      setExpenses(sortedExpenses);
       setSummary(summaryData || {});
     } catch (error) {
       console.error('Error fetching expenses:', error);
@@ -60,9 +111,12 @@ const Expenses = () => {
   const handleOpenModal = () => {
     setFormData({
       date: new Date().toISOString().split('T')[0],
-      category: 'Other',
+      nameSelection: '',
+      customName: '',
+      categorySelection: '',
+      customCategory: '',
       amount: '',
-      title: '',
+      description: '',
     });
     setShowModal(true);
   };
@@ -96,7 +150,55 @@ const Expenses = () => {
     setSubmitting(true);
 
     try {
-      await expenseService.create(formData);
+      const expenseName =
+        formData.nameSelection === 'other'
+          ? formData.customName.trim()
+          : formData.nameSelection;
+
+      const expenseCategory =
+        formData.categorySelection === 'other'
+          ? formData.customCategory.trim()
+          : formData.categorySelection;
+
+      if (!expenseName) {
+        toast.error('Please select or enter name');
+        setSubmitting(false);
+        return;
+      }
+
+      if (!expenseCategory) {
+        toast.error('Please select or enter category');
+        setSubmitting(false);
+        return;
+      }
+
+      if (!formData.description.trim()) {
+        toast.error('Please enter description');
+        setSubmitting(false);
+        return;
+      }
+
+      const description = formData.description.trim();
+
+      const createdExpense = await expenseService.create({
+        date: formData.date,
+        name: expenseName,
+        title: description,
+        category: expenseCategory,
+        amount: formData.amount,
+      });
+
+      // Backward compatibility: if backend ignores `name`, persist it in `title` with a marker.
+      if ((!createdExpense?.name || createdExpense.name.trim() === '') && createdExpense?._id) {
+        try {
+          await expenseService.update(createdExpense._id, {
+            title: `${expenseName}${LEGACY_NAME_SEPARATOR} ${description}`,
+          });
+        } catch (legacyUpdateError) {
+          console.error('Fallback update for legacy backend failed:', legacyUpdateError);
+        }
+      }
+
       toast.success('Expense added successfully!');
       handleCloseModal();
       fetchExpenses();
@@ -135,6 +237,45 @@ const Expenses = () => {
       month: 'short',
       day: 'numeric',
     });
+  };
+
+  const getExpenseDisplayData = (expense) => {
+    const titleValue = (expense.title || '').trim();
+    const nameValue = (expense.name || '').trim();
+
+    if (nameValue) {
+      return {
+        displayName: nameValue,
+        displayDescription: titleValue,
+      };
+    }
+
+    const separatorIndex = titleValue.indexOf(LEGACY_NAME_SEPARATOR);
+    if (separatorIndex > 0) {
+      const extractedName = titleValue.slice(0, separatorIndex).trim();
+      const extractedDescription = titleValue
+        .slice(separatorIndex + LEGACY_NAME_SEPARATOR.length)
+        .trim();
+
+      if (extractedName) {
+        return {
+          displayName: extractedName,
+          displayDescription: extractedDescription,
+        };
+      }
+    }
+
+    if (LEGACY_EXPENSE_NAMES.includes(titleValue)) {
+      return {
+        displayName: titleValue,
+        displayDescription: '',
+      };
+    }
+
+    return {
+      displayName: '',
+      displayDescription: titleValue,
+    };
   };
 
   if (loading) {
@@ -213,7 +354,10 @@ const Expenses = () => {
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4">
-          {expenses.map((expense) => (
+          {expenses.map((expense) => {
+            const { displayName, displayDescription } = getExpenseDisplayData(expense);
+
+            return (
             <Card key={expense._id}>
               <div className="flex flex-col lg:flex-row justify-between gap-4">
                 <div className="flex-1">
@@ -223,14 +367,17 @@ const Expenses = () => {
                         <span className="px-2 md:px-3 py-0.5 md:py-1 bg-gray-100 text-gray-800 rounded-full text-xs font-medium">
                           {expense.category}
                         </span>
+                        <span className="px-2 md:px-3 py-0.5 md:py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
+                          {displayName || 'Unknown'}
+                        </span>
                       </div>
                       <p className="text-xs md:text-sm text-gray-500">{formatDate(expense.date)}</p>
                     </div>
                     <p className="text-lg md:text-xl font-semibold text-red-600">{formatCurrency(expense.amount)}</p>
                   </div>
 
-                  {expense.title && (
-                    <p className="text-xs md:text-sm text-gray-700 mt-2">{expense.title}</p>
+                  {displayDescription && (
+                    <p className="text-xs md:text-sm text-gray-700 mt-2">{displayDescription}</p>
                   )}
                 </div>
 
@@ -248,7 +395,8 @@ const Expenses = () => {
                 </div>
               </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -265,13 +413,46 @@ const Expenses = () => {
           />
 
           <Select
-            label="Category"
-            name="category"
-            value={formData.category}
+            label="Name"
+            name="nameSelection"
+            value={formData.nameSelection}
             onChange={handleChange}
-            options={EXPENSE_CATEGORIES.map((cat) => ({ value: cat, label: cat }))}
+            options={EXPENSE_NAME_OPTIONS}
             required
           />
+
+          {formData.nameSelection === 'other' && (
+            <Input
+              label="Enter Name"
+              type="text"
+              name="customName"
+              value={formData.customName}
+              onChange={handleChange}
+              placeholder="Type name"
+              required
+            />
+          )}
+
+          <Select
+            label="Category"
+            name="categorySelection"
+            value={formData.categorySelection}
+            onChange={handleChange}
+            options={EXPENSE_CATEGORY_OPTIONS}
+            required
+          />
+
+          {formData.categorySelection === 'other' && (
+            <Input
+              label="Enter Category"
+              type="text"
+              name="customCategory"
+              value={formData.customCategory}
+              onChange={handleChange}
+              placeholder="Type category"
+              required
+            />
+          )}
 
           <Input
             label="Amount"
@@ -287,13 +468,13 @@ const Expenses = () => {
 
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Title <span className="text-red-500">*</span>
+              Description <span className="text-red-500">*</span>
             </label>
             <textarea
-              name="title"
-              value={formData.title}
+              name="description"
+              value={formData.description}
               onChange={handleChange}
-              placeholder="Enter expense title"
+              placeholder="Enter expense description"
               rows="3"
               required
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"

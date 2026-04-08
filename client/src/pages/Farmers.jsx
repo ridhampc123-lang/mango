@@ -9,6 +9,13 @@ import EmptyState from '../components/EmptyState';
 import ConfirmDialog from '../components/ConfirmDialog';
 import toast from 'react-hot-toast';
 
+const MANGO_VARIETY_OPTIONS = [
+  { value: '', label: 'Select variety' },
+  { value: 'Kesar', label: 'Kesar' },
+  { value: 'Kachchh Kesar', label: 'Kachchh Kesar' },
+  { value: 'other', label: 'Other' },
+];
+
 const Farmers = () => {
   const [farmers, setFarmers] = useState([]);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -36,7 +43,8 @@ const Farmers = () => {
   });
 
   const [purchaseData, setPurchaseData] = useState({
-    variety: '',
+    varietySelection: '',
+    customVariety: '',
     boxType: '5',
     boxQuantity: '',
     ratePerBox: '',
@@ -118,7 +126,8 @@ const Farmers = () => {
   const handleOpenPurchaseModal = (farmer) => {
     setSelectedFarmer(farmer);
     setPurchaseData({
-      variety: '',
+      varietySelection: '',
+      customVariety: '',
       boxType: '5',
       boxQuantity: '',
       ratePerBox: '',
@@ -176,7 +185,7 @@ const Farmers = () => {
       const data = await farmerService.getLedger(farmer._id);
       setLedgerData(data);
       setShowLedgerModal(true);
-    } catch (error) {
+    } catch {
       toast.error('Failed to load ledger data');
     }
   };
@@ -224,9 +233,20 @@ const Farmers = () => {
     setSubmitting(true);
 
     try {
+      const selectedVariety =
+        purchaseData.varietySelection === 'other'
+          ? purchaseData.customVariety.trim()
+          : purchaseData.varietySelection;
+
+      if (!selectedVariety) {
+        toast.error('Please select or enter mango variety');
+        setSubmitting(false);
+        return;
+      }
+
       const payload = {
         farmerId: selectedFarmer._id,
-        variety: purchaseData.variety,
+        variety: selectedVariety,
         boxType: Number(purchaseData.boxType),
         boxQuantity: Number(purchaseData.boxQuantity),
         ratePerBox: Number(purchaseData.ratePerBox),
@@ -567,15 +587,36 @@ const Farmers = () => {
             required
           />
 
-          <Input
-            label="Variety"
-            type="text"
-            name="variety"
-            value={purchaseData.variety}
-            onChange={handlePurchaseChange}
-            placeholder="Enter mango variety"
-            required
-          />
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Mango Variety <span className="text-red-500">*</span>
+            </label>
+            <select
+              name="varietySelection"
+              value={purchaseData.varietySelection}
+              onChange={handlePurchaseChange}
+              required
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              {MANGO_VARIETY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {purchaseData.varietySelection === 'other' && (
+            <Input
+              label="Enter Variety"
+              type="text"
+              name="customVariety"
+              value={purchaseData.customVariety}
+              onChange={handlePurchaseChange}
+              placeholder="Type mango variety"
+              required
+            />
+          )}
 
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">
