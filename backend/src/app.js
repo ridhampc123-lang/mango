@@ -17,12 +17,29 @@ const labourRoutes = require('./routes/labourRoutes');
 
 const app = express();
 
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const vercelPreviewPattern = /^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/;
+
 // Middleware
 app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "https://dapper-pastelito-8ee89e.netlify.app"
-  ],
+  origin: (origin, callback) => {
+    // Allow non-browser requests like curl/Postman and same-origin requests.
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    if (allowedOrigins.includes(origin) || vercelPreviewPattern.test(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
