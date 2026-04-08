@@ -17,9 +17,30 @@ const labourRoutes = require('./routes/labourRoutes');
 
 const app = express();
 
-const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173')
+const normalizeOrigin = (origin) => {
+  const trimmed = origin.trim().replace(/\/+$/, '');
+
+  if (!trimmed) {
+    return '';
+  }
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith('localhost') || trimmed.startsWith('127.0.0.1')) {
+    return `http://${trimmed}`;
+  }
+
+  return `https://${trimmed}`;
+};
+
+const allowedOrigins = (
+  process.env.CORS_ORIGINS ||
+  'http://localhost:5173,mango-qq94uemu8-royals-projects-9a33691c.vercel.app'
+)
   .split(',')
-  .map((origin) => origin.trim())
+  .map(normalizeOrigin)
   .filter(Boolean);
 
 const vercelPreviewPattern = /^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/;
@@ -33,7 +54,9 @@ app.use(cors({
       return;
     }
 
-    if (allowedOrigins.includes(origin) || vercelPreviewPattern.test(origin)) {
+    const normalizedRequestOrigin = normalizeOrigin(origin);
+
+    if (allowedOrigins.includes(normalizedRequestOrigin) || vercelPreviewPattern.test(origin)) {
       callback(null, true);
       return;
     }
