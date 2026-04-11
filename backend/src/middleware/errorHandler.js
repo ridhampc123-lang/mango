@@ -33,7 +33,11 @@ const errorHandler = (err, req, res, next) => {
   
   if (err.code === 11000) {
     statusCode = 400;
-    err.message = 'Duplicate field value entered';
+    const duplicateField = err.keyValue ? Object.keys(err.keyValue)[0] : null;
+    const duplicateValue = duplicateField ? err.keyValue[duplicateField] : null;
+    err.message = duplicateField
+      ? `${duplicateField} '${duplicateValue}' already exists`
+      : 'Duplicate field value entered';
   }
   
   if (err.name === 'JsonWebTokenError') {

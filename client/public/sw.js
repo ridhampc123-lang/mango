@@ -29,6 +29,12 @@ self.addEventListener('message', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
+  const url = new URL(request.url);
+
+  // Skip API requests - let them go directly to the network
+  if (url.pathname.startsWith('/api/') || url.hostname !== location.hostname) {
+    return;
+  }
 
   if (request.method !== 'GET') {
     return;
