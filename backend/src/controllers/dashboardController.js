@@ -1,14 +1,25 @@
 const Order = require('../models/Order');
 const Expense = require('../models/Expense');
-const VarietyStock = require('../models/VarietyStock');
+const Stock = require('../models/Stock');
+const FarmerPurchase = require('../models/FarmerPurchase');
 const Customer = require('../models/Customer');
 const Labour = require('../models/Labour');
+
+const setNoCacheHeaders = (res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+  res.set('X-Accel-Expires', '0');
+};
 
 // @desc    Get dashboard summary
 // @route   GET /api/dashboard/summary
 // @access  Private
 exports.getSummary = async (req, res, next) => {
   try {
+    setNoCacheHeaders(res);
+
     // Get today's date range
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -73,14 +84,119 @@ exports.getSummary = async (req, res, next) => {
     const netProfit = totalRevenue - totalExpenses;
     const todayProfit = todaySales - todayExpense;
 
-    // Get total boxes available from VarietyStock
-    const varietyStocks = await VarietyStock.find();
-    let totalBoxesAvailable = 0;
-    varietyStocks.forEach(stock => {
-      const box5Remaining = Number(stock.box5Total || 0) - Number(stock.box5Sold || 0);
-      const box10Remaining = Number(stock.box10Total || 0) - Number(stock.box10Sold || 0);
-      totalBoxesAvailable += box5Remaining + box10Remaining;
-    });
+    // Calculate box availability dynamically from source records minus sold orders.
+    // Priority: if manual Stock entries exist, use Stock inflow; otherwise use FarmerPurchase inflow.
+    const [stockAgg, farmerPurchaseAgg, soldOrdersAgg] = await Promise.all([
+      Stock.aggregate([
+        {
+          $group: {
+            _id: null,
+            entries: { $sum: 1 },
+            totalBoxes5: {
+              $sum: {
+                $cond: [{ $eq: ['$boxType', 5] }, { $ifNull: ['$totalBoxes', 0] }, 0],
+              },
+            },
+            totalBoxes10: {
+              $sum: {
+                $cond: [{ $eq: ['$boxType', 10] }, { $ifNull: ['$totalBoxes', 0] }, 0],
+              },
+            },
+          },
+        },
+      ]),
+      FarmerPurchase.aggregate([
+        {
+          $group: {
+            _id: null,
+            entries: { $sum: 1 },
+            totalBoxes5: {
+              $sum: {
+                $cond: [{ $eq: ['$boxType', 5] }, { $ifNull: ['$boxQuantity', 0] }, 0],
+              },
+            },
+            totalBoxes10: {
+              $sum: {
+                $cond: [{ $eq: ['$boxType', 10] }, { $ifNull: ['$boxQuantity', 0] }, 0],
+              },
+            },
+          },
+        },
+      ]),
+      Order.aggregate([
+        {
+          $project: {
+            normalizedBoxType: {
+              $switch: {
+                branches: [
+                  {
+                    case: {
+                      $or: [
+                        { $eq: ['$boxSize', '5kg'] },
+                        { $eq: ['$boxSize', '5'] },
+                        { $eq: ['$boxSize', 5] },
+                      ],
+                    },
+                    then: 5,
+                  },
+                  {
+                    case: {
+                      $or: [
+                        { $eq: ['$boxSize', '10kg'] },
+                        { $eq: ['$boxSize', '10'] },
+                        { $eq: ['$boxSize', 10] },
+                      ],
+                    },
+                    then: 10,
+                  },
+                ],
+                default: null,
+              },
+            },
+            boxQuantity: { $ifNull: ['$boxQuantity', 0] },
+          },
+        },
+        {
+          $match: {
+            normalizedBoxType: { $in: [5, 10] },
+          },
+        },
+        {
+          $group: {
+            _id: '$normalizedBoxType',
+            totalSold: { $sum: '$boxQuantity' },
+          },
+        },
+      ]),
+    ]);
+
+    const stockMetrics = stockAgg[0] || {
+      entries: 0,
+      totalBoxes5: 0,
+      totalBoxes10: 0,
+    };
+
+    const farmerPurchaseMetrics = farmerPurchaseAgg[0] || {
+      entries: 0,
+      totalBoxes5: 0,
+      totalBoxes10: 0,
+    };
+
+    const soldBoxes5 = Number(soldOrdersAgg.find((row) => row._id === 5)?.totalSold || 0);
+    const soldBoxes10 = Number(soldOrdersAgg.find((row) => row._id === 10)?.totalSold || 0);
+
+    const sourceMetrics = stockMetrics.entries > 0 ? stockMetrics : farmerPurchaseMetrics;
+    const boxDataSource = stockMetrics.entries > 0 ? 'stock' : 'purchase';
+
+    const totalBoxes5Available = Math.max(
+      0,
+      Number(sourceMetrics.totalBoxes5 || 0) - soldBoxes5
+    );
+    const totalBoxes10Available = Math.max(
+      0,
+      Number(sourceMetrics.totalBoxes10 || 0) - soldBoxes10
+    );
+    const totalBoxesAvailable = totalBoxes5Available + totalBoxes10Available;
 
     // Get total credit outstanding (sum of all customer balances)
     const creditResult = await Customer.aggregate([
@@ -121,6 +237,9 @@ exports.getSummary = async (req, res, next) => {
         netProfit,
         totalCreditOutstanding,
         totalLabourPending,
+        totalBoxes5Available,
+        totalBoxes10Available,
+        boxDataSource,
       },
     });
   } catch (error) {
@@ -133,19 +252,24 @@ exports.getSummary = async (req, res, next) => {
 // @access  Private
 exports.getMonthlyRevenue = async (req, res, next) => {
   try {
-    const { year } = req.query;
-    const startDate = new Date(`${year}-01-01`);
-    const endDate = new Date(`${year}-12-31`);
+    setNoCacheHeaders(res);
+
+    const requestedYear = Number(req.query.year);
+    const year = Number.isFinite(requestedYear) && requestedYear > 0
+      ? requestedYear
+      : new Date().getFullYear();
+    const startDate = new Date(`${year}-01-01T00:00:00.000Z`);
+    const endDate = new Date(`${year}-12-31T23:59:59.999Z`);
 
     const revenueData = await Order.aggregate([
       {
         $match: {
-          date: { $gte: startDate, $lte: endDate }
+          createdAt: { $gte: startDate, $lte: endDate }
         }
       },
       {
         $group: {
-          _id: { $month: '$date' },
+          _id: { $month: '$createdAt' },
           total: { $sum: '$totalAmount' }
         }
       },
@@ -174,6 +298,8 @@ exports.getMonthlyRevenue = async (req, res, next) => {
 // @access  Private
 exports.getMonthlyExpenses = async (req, res, next) => {
   try {
+    setNoCacheHeaders(res);
+
     const { year } = req.query;
     const startDate = new Date(`${year}-01-01`);
     const endDate = new Date(`${year}-12-31`);
@@ -215,20 +341,25 @@ exports.getMonthlyExpenses = async (req, res, next) => {
 // @access  Private
 exports.getProfitTrend = async (req, res, next) => {
   try {
-    const { year } = req.query;
-    const startDate = new Date(`${year}-01-01`);
-    const endDate = new Date(`${year}-12-31`);
+    setNoCacheHeaders(res);
+
+    const requestedYear = Number(req.query.year);
+    const year = Number.isFinite(requestedYear) && requestedYear > 0
+      ? requestedYear
+      : new Date().getFullYear();
+    const startDate = new Date(`${year}-01-01T00:00:00.000Z`);
+    const endDate = new Date(`${year}-12-31T23:59:59.999Z`);
 
     // Get revenue by month
     const revenueData = await Order.aggregate([
       {
         $match: {
-          date: { $gte: startDate, $lte: endDate }
+          createdAt: { $gte: startDate, $lte: endDate }
         }
       },
       {
         $group: {
-          _id: { $month: '$date' },
+          _id: { $month: '$createdAt' },
           revenue: { $sum: '$totalAmount' }
         }
       }

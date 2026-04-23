@@ -315,6 +315,127 @@ exports.createFarmerPurchase = asyncHandler(async (req, res, next) => {
   }
 });
 
+// @desc    Delete single farmer purchase entry
+// @route   DELETE /api/farmers/:id/purchase/:purchaseId
+// @access  Private
+exports.deleteFarmerPurchase = asyncHandler(async (req, res, next) => {
+  const { id, purchaseId } = req.params;
+
+  if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid farmer ID format',
+    });
+  }
+
+  if (!purchaseId.match(/^[0-9a-fA-F]{24}$/)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid purchase ID format',
+    });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const farmer = await Farmer.findById(id).session(session);
+
+    if (!farmer) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: 'Farmer not found',
+      });
+    }
+
+    const purchase = await FarmerPurchase.findOne({ _id: purchaseId, farmerId: id }).session(session);
+
+    if (!purchase) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: 'Purchase entry not found for this farmer',
+      });
+    }
+
+    const varietyStock = await VarietyStock.findOne({ variety: purchase.variety }).session(session);
+
+    if (!varietyStock) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Variety stock record not found for this purchase',
+      });
+    }
+
+    const stockField = purchase.boxType === 5 ? 'box5Total' : 'box10Total';
+    const soldField = purchase.boxType === 5 ? 'box5Sold' : 'box10Sold';
+    const stockAfterDelete = Number(varietyStock[stockField] || 0) - Number(purchase.boxQuantity || 0);
+    const soldBoxes = Number(varietyStock[soldField] || 0);
+
+    if (stockAfterDelete < 0) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete purchase because it would make stock negative',
+      });
+    }
+
+    if (stockAfterDelete < soldBoxes) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete purchase because boxes from this stock are already sold',
+      });
+    }
+
+    const updatedTotalBoxes5 = Number(farmer.totalBoxes5 || 0) - (purchase.boxType === 5 ? Number(purchase.boxQuantity || 0) : 0);
+    const updatedTotalBoxes10 = Number(farmer.totalBoxes10 || 0) - (purchase.boxType === 10 ? Number(purchase.boxQuantity || 0) : 0);
+    const updatedTotalPurchaseAmount = Number(farmer.totalPurchaseAmount || 0) - Number(purchase.totalCost || 0);
+    const updatedTotalPaymentGiven = Number(farmer.totalPaymentGiven || 0) - Number(purchase.paymentGiven || 0);
+    const recalculatedPending = updatedTotalPurchaseAmount - updatedTotalPaymentGiven;
+
+    if (
+      updatedTotalBoxes5 < 0 ||
+      updatedTotalBoxes10 < 0 ||
+      updatedTotalPurchaseAmount < 0 ||
+      updatedTotalPaymentGiven < 0 ||
+      recalculatedPending < -0.0001
+    ) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete this entry because payment totals would become inconsistent',
+      });
+    }
+
+    farmer.totalBoxes5 = updatedTotalBoxes5;
+    farmer.totalBoxes10 = updatedTotalBoxes10;
+    farmer.totalPurchaseAmount = updatedTotalPurchaseAmount;
+    farmer.totalPaymentGiven = updatedTotalPaymentGiven;
+    farmer.pendingPayment = Math.max(0, recalculatedPending);
+
+    varietyStock[stockField] = stockAfterDelete;
+
+    await farmer.save({ session });
+    await varietyStock.save({ session });
+    await FarmerPurchase.deleteOne({ _id: purchase._id }, { session });
+
+    await session.commitTransaction();
+
+    res.status(200).json({
+      success: true,
+      message: 'Purchase entry deleted successfully',
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    session.endSession();
+  }
+});
+
 // @desc    Get farmer ledger
 // @route   GET /api/farmers/:id/ledger
 // @access  Private

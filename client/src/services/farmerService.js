@@ -37,6 +37,12 @@ export const farmerService = {
     return response.data;
   },
 
+  // Delete farmer purchase entry
+  deletePurchase: async (farmerId, purchaseId) => {
+    const response = await axiosInstance.delete(`/farmers/${farmerId}/purchase/${purchaseId}`);
+    return response.data;
+  },
+
   // Make payment to farmer
   makePayment: async (id, data) => {
     const response = await axiosInstance.post(`/farmers/${id}/payment`, data);

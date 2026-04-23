@@ -48,7 +48,7 @@ varietyStockSchema.virtual('box10Remaining').get(function () {
 varietyStockSchema.set('toJSON', { virtuals: true });
 varietyStockSchema.set('toObject', { virtuals: true });
 
-// Index for faster queries
-varietyStockSchema.index({ variety: 1 });
+// Index for faster queries (variety is already indexed by unique: true)
+varietyStockSchema.index({ variety: 1 }, { unique: false });
 
 module.exports = mongoose.model('VarietyStock', varietyStockSchema);

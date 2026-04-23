@@ -6,6 +6,7 @@ const {
   getFarmerById,
   updateFarmer,
   createFarmerPurchase,
+  deleteFarmerPurchase,
   getFarmerLedger,
   makePayment,
   deleteFarmer,
@@ -16,6 +17,7 @@ const { protect } = require('../middleware/auth');
 router.route('/').post(protect, createFarmer).get(protect, getAllFarmers);
 router.get('/export', protect, exportFarmersToExcel);
 router.post('/purchase', protect, createFarmerPurchase);
+router.delete('/:id/purchase/:purchaseId', protect, deleteFarmerPurchase);
 router
   .route('/:id')
   .get(protect, getFarmerById)

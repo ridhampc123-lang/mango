@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { dashboardService } from '../services/dashboardService';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import StatCard from '../components/StatCard';
@@ -16,7 +16,7 @@ const Dashboard = () => {
   const [refreshing, setRefreshing] = useState(false);
   const currentYear = new Date().getFullYear();
 
-  const fetchDashboardData = async (isRefresh = false) => {
+  const fetchDashboardData = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
       setRefreshing(true);
     } else {
@@ -24,6 +24,17 @@ const Dashboard = () => {
     }
 
     try {
+      // Clear any potential cached data
+      if (isRefresh) {
+        // Force clear browser cache for dashboard data
+        if ('caches' in window) {
+          const cacheNames = await caches.keys();
+          await Promise.all(
+            cacheNames.map(cacheName => caches.delete(cacheName))
+          );
+        }
+      }
+
       const [summaryData, revenueData, expensesData, profitData] = await Promise.all([
         dashboardService.getSummary(),
         dashboardService.getMonthlyRevenue(currentYear),
@@ -37,23 +48,39 @@ const Dashboard = () => {
       setProfitTrend(Array.isArray(profitData) ? profitData : []);
 
       if (isRefresh) {
-        toast.success('Dashboard refreshed!');
+        toast.success('Dashboard refreshed with latest data!');
       }
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
+      toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [currentYear]);
 
   useEffect(() => {
     fetchDashboardData();
-  }, []);
+  }, [fetchDashboardData]);
 
-  if (loading) {
-    return <Loading fullScreen />;
-  }
+  // Force refresh on window focus to ensure real-time data
+  useEffect(() => {
+    const handleFocus = () => {
+      fetchDashboardData(true);
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [fetchDashboardData]);
+
+  // Auto-refresh every 30 seconds for real-time updates
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchDashboardData();
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(interval);
+  }, [fetchDashboardData]);
 
   const formatCurrency = (value) => {
     return new Intl.NumberFormat('en-IN', {
@@ -91,8 +118,30 @@ const Dashboard = () => {
       {/* Summary Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-4">
         <StatCard
-          title="Total Boxes Available"
+          title={`Total Boxes Available (${summary?.boxDataSource === 'stock' ? 'Stock' : 'Purchases'})`}
           value={summary?.totalBoxesAvailable || 0}
+          color="blue"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+          }
+        />
+
+        <StatCard
+          title="5kg Boxes Available"
+          value={summary?.totalBoxes5Available || 0}
+          color="blue"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+          }
+        />
+
+        <StatCard
+          title="10kg Boxes Available"
+          value={summary?.totalBoxes10Available || 0}
           color="blue"
           icon={
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
